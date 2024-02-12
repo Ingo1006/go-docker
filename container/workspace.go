@@ -26,13 +26,19 @@ func NewWorkSpace(rootPath string, mntPath string, volume string) error {
 		logrus.Errorf("create write layer, err: %v", err)
 		return err
 	}
-	// 3. 创建挂载点，将只读层和读写层挂载到指定位置
+	// 3. 创建overlay挂载需要指定的工作目录
+	err = createOverlayWorkDir(rootPath)
+	if err != nil {
+		logrus.Errorf("create overlay work dir, err: %v", err)
+		return err
+	}
+	// 4. 创建挂载点，将只读层和读写层挂载到指定位置
 	err = CreateMountPoint(rootPath, mntPath)
 	if err != nil {
 		logrus.Errorf("create mount point, err: %v", err)
 		return err
 	}
-	// 4. 设置宿主机与容器文件映射
+	// 5. 设置宿主机与容器文件映射
 	mountVolume(rootPath, mntPath, volume)
 	return nil
 }
@@ -69,6 +75,19 @@ func createWriteLayer(rootPath string) error {
 	return nil
 }
 
+func createOverlayWorkDir(rootPath string) error {
+	workDir := path.Join(rootPath, common.OverlayWorkDir)
+	_, err := os.Stat(workDir)
+	if err != nil && os.IsNotExist(err) {
+		err = os.MkdirAll(workDir, os.ModePerm)
+		if err != nil {
+			logrus.Errorf("mkdir overlay work dir, err: %v", err)
+			return err
+		}
+	}
+	return nil
+}
+
 func CreateMountPoint(rootPath string, mntPath string) error {
 	_, err := os.Stat(mntPath)
 	if err != nil && os.IsNotExist(err) {
@@ -79,8 +98,9 @@ func CreateMountPoint(rootPath string, mntPath string) error {
 		}
 	}
 
-	dirs := fmt.Sprintf("dirs=%s%s:%s%s", rootPath, common.WriteLayer, rootPath, common.BusyBox)
-	cmd := exec.Command("mount", "-t", "aufs", "-o", dirs, "none", mntPath)
+	args := fmt.Sprintf("lowerdir=%s%s,upperdir=%s%s,workdir=%s%s",
+		rootPath, common.BusyBox, rootPath, common.WriteLayer, rootPath, common.OverlayWorkDir)
+	cmd := exec.Command("mount", "-t", "overlay", "overlay", "-o", args, mntPath)
 	if err := cmd.Run(); err != nil {
 		logrus.Errorf("mnt cmd run, err: %v", err)
 		return err
@@ -110,8 +130,9 @@ func mountVolume(rootPath, mntPath, volume string) {
 			}
 
 			// 把宿主机文件目录挂载到容器挂载点中
-			dirs := fmt.Sprintf("dirs=%s", parentPath)
-			cmd := exec.Command("mount", "-t", "aufs", "-o", dirs, "none", containerVolumePath)
+			//args := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s%s",
+			//	parentPath, containerVolumePath, rootPath, common.OverlayWorkDir)
+			cmd := exec.Command("mount", "--bind", parentPath, containerVolumePath)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
@@ -139,7 +160,7 @@ func DeleteWorkSpace(rootPath, mntPath, volume string) error {
 }
 
 func unMountPoint(mntPath string) error {
-	if _, err := exec.Command("umount", mntPath).CombinedOutput(); err != nil {
+	if _, err := exec.Command("umount", "-l", mntPath).CombinedOutput(); err != nil {
 		logrus.Errorf("unmount mnt, err: %v", err)
 		return err
 	}

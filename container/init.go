@@ -90,6 +90,7 @@ func pivotRoot() error {
 		return err
 	}
 	logrus.Infof("current location is %s", root)
+	writeCurrentLoc(err, root)
 
 	// systemd 加入linux之后, mount namespace 就变成 shared by default, 所以你必须显示
 	//声明你要这个新的mount namespace独立。
@@ -127,4 +128,25 @@ func pivotRoot() error {
 	}
 	// 删除临时文件夹
 	return os.Remove(pivotDir)
+}
+
+func writeCurrentLoc(err error, root string) {
+	// 创建文件
+	file, err := os.Create("/root/mnt/test/test.txt")
+	if err != nil {
+		logrus.Errorf("创建文件失败：%s", err)
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			logrus.Errorf("关闭文件失败：%s", err)
+		}
+	}(file)
+	// 写入文件内容
+	content := "current location is " + root
+	_, err = file.WriteString(content)
+	if err != nil {
+		logrus.Errorf("写入文件失败：%s", err)
+	}
+	logrus.Errorf("写入文件成功：%s", err)
 }
